@@ -172,7 +172,7 @@ class NeuralNet(BaseEstimator):
         regression=False,
         max_epochs=100,
         train_split=TrainSplit(eval_size=0.2),
-        custom_score=None,
+        custom_scores=None,
         X_tensor_type=None,
         y_tensor_type=None,
         use_label_encoder=False,
@@ -223,6 +223,13 @@ class NeuralNet(BaseEstimator):
         if isinstance(layers, Layer):
             layers = _list([layers])
 
+        if 'custom_score' in kwargs:
+            # add it to custom_scores
+            if custom_scores is None:
+                custom_scores = [kwargs.pop('custom_score')]
+            else:
+                custom_scores.append(kwargs.pop('custom_score'))
+
         self.layers = layers
         self.update = update
         self.objective = objective
@@ -232,7 +239,7 @@ class NeuralNet(BaseEstimator):
         self.regression = regression
         self.max_epochs = max_epochs
         self.train_split = train_split
-        self.custom_score = custom_score
+        self.custom_scores = custom_scores
         self.y_tensor_type = y_tensor_type
         self.use_label_encoder = use_label_encoder
         self.on_batch_finished = on_batch_finished or []
@@ -505,7 +512,10 @@ class NeuralNet(BaseEstimator):
             train_losses = []
             valid_losses = []
             valid_accuracies = []
-            custom_score = []
+            if self.custom_scores:
+                custom_scores = [[] for _ in self.custom_scores]
+            else:
+                custom_scores = []
 
             t0 = time()
 
@@ -523,15 +533,16 @@ class NeuralNet(BaseEstimator):
                 valid_losses.append(batch_valid_loss)
                 valid_accuracies.append(accuracy)
 
-                if self.custom_score:
+                if self.custom_scores:
                     y_prob = self.apply_batch_func(self.predict_iter_, Xb)
-                    custom_score.append(self.custom_score[1](yb, y_prob))
+                    for custom_scorer, custom_score in zip(self.custom_scores, custom_scores):
+                        custom_score.append(custom_scorer[1](yb, y_prob))
 
             avg_train_loss = np.mean(train_losses)
             avg_valid_loss = np.mean(valid_losses)
             avg_valid_accuracy = np.mean(valid_accuracies)
-            if custom_score:
-                avg_custom_score = np.mean(custom_score)
+            if custom_scores:
+                avg_custom_scores = np.mean(custom_scores, axis=1)
 
             if avg_train_loss < best_train_loss:
                 best_train_loss = avg_train_loss
@@ -547,8 +558,9 @@ class NeuralNet(BaseEstimator):
                 'valid_accuracy': avg_valid_accuracy,
                 'dur': time() - t0,
                 }
-            if self.custom_score:
-                info[self.custom_score[0]] = avg_custom_score
+            if self.custom_scores:
+                for index, custom_score in enumerate(self.custom_scores):
+                    info[custom_score[0]] = avg_custom_scores[index]
             self.train_history_.append(info)
 
             try:
@@ -687,3 +699,29 @@ class NeuralNet(BaseEstimator):
         # This allows us to have **kwargs in __init__ (woot!):
         param_names = super(NeuralNet, self)._get_param_names()
         return param_names + self._kwarg_keys
+
+    @property
+    def custom_score(self):
+        if self.custom_scores and len(self.custom_scores) == 1:
+            return self.custom_scores[0]
+        else:
+            raise AttributeError("No custom_score here")
+
+    @custom_score.setter
+    def custom_score(self, scorer):
+        if self.custom_scores:
+            if len(self.custom_scores) == 1:
+                self.custom_scores[0] = scorer
+            else:
+                raise AttributeError("No custom_score here")
+        else:
+            self.custom_scores = [scorer]
+
+    @custom_score.deleter
+    def custom_score(self):
+        if self.custom_scores and len(self.custom_scores) == 1:
+            self.custom_scores = []
+        else:
+            raise AttributeError("No custom_score here")
+
+    
